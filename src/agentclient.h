@@ -4,6 +4,7 @@
 #include <QtQml/qqmlregistration.h>
 #include <QObject>
 #include <QStringList>
+#include <QVariantList>
 
 class QNetworkAccessManager;
 class QNetworkReply;
@@ -37,6 +38,16 @@ class AgentClient : public QObject
                    NOTIFY selectedModelChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusChanged)
 
+    Q_PROPERTY(QVariantList modelCatalog READ modelCatalog NOTIFY modelCatalogChanged)
+
+    Q_PROPERTY(bool downloadActive READ downloadActive NOTIFY downloadStateChanged)
+    Q_PROPERTY(QString downloadingModelId READ downloadingModelId NOTIFY downloadStateChanged)
+    Q_PROPERTY(qint64 downloadBytesDone READ downloadBytesDone NOTIFY downloadStateChanged)
+    Q_PROPERTY(qint64 downloadBytesTotal READ downloadBytesTotal NOTIFY downloadStateChanged)
+    Q_PROPERTY(double downloadPercent READ downloadPercent NOTIFY downloadStateChanged)
+    Q_PROPERTY(bool downloadDone READ downloadDone NOTIFY downloadStateChanged)
+    Q_PROPERTY(QString downloadError READ downloadError NOTIFY downloadStateChanged)
+
 public:
     explicit AgentClient(QObject *parent = nullptr);
 
@@ -48,21 +59,37 @@ public:
     QString selectedModel() const { return m_selectedModel; }
     QString statusText() const { return m_statusText; }
 
+    QVariantList modelCatalog() const { return m_modelCatalog; }
+
+    bool downloadActive() const { return m_downloadActive; }
+    QString downloadingModelId() const { return m_downloadingModelId; }
+    qint64 downloadBytesDone() const { return m_downloadBytesDone; }
+    qint64 downloadBytesTotal() const { return m_downloadBytesTotal; }
+    double downloadPercent() const { return m_downloadPercent; }
+    bool downloadDone() const { return m_downloadDone; }
+    QString downloadError() const { return m_downloadError; }
+
     void setServerUrl(const QString &v);
     void setSelectedModel(const QString &v);
 
     Q_INVOKABLE void checkConnection();
+    Q_INVOKABLE void refreshCatalog();
+    Q_INVOKABLE void downloadModel(const QString &id);
 
 signals:
     void serverUrlChanged();
     void statusChanged();
     void availableModelsChanged();
     void selectedModelChanged();
+    void modelCatalogChanged();
+    void downloadStateChanged();
 
 private:
     void load();
     void fetchModels();
     void setStatusText(const QString &s);
+    void pollDownloadStatus();
+    void resetDownloadState();
 
     QNetworkAccessManager *m_net = nullptr;
 
@@ -76,6 +103,18 @@ private:
     QString m_statusText = QStringLiteral("not connected");
 
     QTimer *m_pollTimer = nullptr;
+
+    QVariantList m_modelCatalog;
+
+    bool m_downloadActive = false;
+    QString m_downloadingModelId;
+    qint64 m_downloadBytesDone = 0;
+    qint64 m_downloadBytesTotal = 0;
+    double m_downloadPercent = 0.0;
+    bool m_downloadDone = false;
+    QString m_downloadError;
+
+    QTimer *m_downloadPollTimer = nullptr;
 };
 
 } // namespace Agent

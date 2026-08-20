@@ -10,6 +10,7 @@
 #include <QSettings>
 #include <QTimer>
 #include <QUrl>
+#include <QVariantMap>
 
 namespace PdM {
 namespace Agent {
@@ -19,6 +20,7 @@ static constexpr auto kKeySelectedModel = "agent/selectedModel";
 static constexpr auto kDefaultServerUrl = "http://127.0.0.1:8420";
 
 static constexpr int kPollIntervalMs = 5000;
+static constexpr int kDownloadPollIntervalMs = 500;
 static constexpr int kRequestTimeoutMs = 4000;
 
 AgentClient::AgentClient(QObject *parent)
@@ -31,6 +33,10 @@ AgentClient::AgentClient(QObject *parent)
     m_pollTimer->setInterval(kPollIntervalMs);
     connect(m_pollTimer, &QTimer::timeout, this, &AgentClient::checkConnection);
     m_pollTimer->start();
+
+    m_downloadPollTimer = new QTimer(this);
+    m_downloadPollTimer->setInterval(kDownloadPollIntervalMs);
+    connect(m_downloadPollTimer, &QTimer::timeout, this, &AgentClient::pollDownloadStatus);
 
     checkConnection();
 }
@@ -142,6 +148,130 @@ void AgentClient::fetchModels()
         if (models != m_availableModels) {
             m_availableModels = models;
             emit availableModelsChanged();
+        }
+    });
+}
+
+void AgentClient::refreshCatalog()
+{
+    QNetworkRequest req{ QUrl(m_serverUrl + QStringLiteral("/catalog")) };
+    req.setTransferTimeout(kRequestTimeoutMs);
+
+    QNetworkReply *reply = m_net->get(req);
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        reply->deleteLater();
+        if (reply->error() != QNetworkReply::NoError)
+            return;
+
+        const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+        if (!doc.isObject())
+            return;
+
+        QVariantList catalog;
+        const QJsonArray arr = doc.object().value(QStringLiteral("models")).toArray();
+        for (const QJsonValue &v : arr) {
+            const QJsonObject o = v.toObject();
+            QVariantMap entry;
+            entry[QStringLiteral("id")] = o.value(QStringLiteral("id")).toString();
+            entry[QStringLiteral("label")] = o.value(QStringLiteral("label")).toString();
+            entry[QStringLiteral("repo")] = o.value(QStringLiteral("repo")).toString();
+            entry[QStringLiteral("filename")] = o.value(QStringLiteral("filename")).toString();
+            entry[QStringLiteral("sizeBytes")] = o.value(QStringLiteral("size_bytes")).toVariant();
+            entry[QStringLiteral("installed")] = o.value(QStringLiteral("installed")).toBool();
+            catalog << entry;
+        }
+
+        m_modelCatalog = catalog;
+        emit modelCatalogChanged();
+    });
+}
+
+void AgentClient::downloadModel(const QString &id)
+{
+    QNetworkRequest req{ QUrl(m_serverUrl + QStringLiteral("/download")) };
+    req.setTransferTimeout(kRequestTimeoutMs);
+    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+
+    const QJsonObject body{ { QStringLiteral("id"), id } };
+    QNetworkReply *reply = m_net->post(req, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, id]() {
+        reply->deleteLater();
+
+        if (reply->error() != QNetworkReply::NoError
+            && reply->error() != QNetworkReply::ContentConflictError
+            && reply->error() != QNetworkReply::ContentNotFoundError) {
+            m_downloadError = tr("could not reach %1 to start the download").arg(m_serverUrl);
+            emit downloadStateChanged();
+            return;
+        }
+
+        const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+        const QJsonObject obj = doc.object();
+
+        if (obj.value(QStringLiteral("already_installed")).toBool()) {
+            refreshCatalog();
+            return;
+        }
+
+        if (!obj.value(QStringLiteral("started")).toBool()) {
+            m_downloadError = obj.value(QStringLiteral("error")).toString(
+                tr("download could not be started"));
+            emit downloadStateChanged();
+            return;
+        }
+
+        resetDownloadState();
+        m_downloadActive = true;
+        m_downloadingModelId = id;
+        emit downloadStateChanged();
+
+        if (!m_downloadPollTimer->isActive())
+            m_downloadPollTimer->start();
+        pollDownloadStatus();
+    });
+}
+
+void AgentClient::resetDownloadState()
+{
+    m_downloadActive = false;
+    m_downloadingModelId.clear();
+    m_downloadBytesDone = 0;
+    m_downloadBytesTotal = 0;
+    m_downloadPercent = 0.0;
+    m_downloadDone = false;
+    m_downloadError.clear();
+}
+
+void AgentClient::pollDownloadStatus()
+{
+    QNetworkRequest req{ QUrl(m_serverUrl + QStringLiteral("/download/status")) };
+    req.setTransferTimeout(kRequestTimeoutMs);
+
+    QNetworkReply *reply = m_net->get(req);
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        reply->deleteLater();
+
+        if (reply->error() != QNetworkReply::NoError)
+            return;
+
+        const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+        if (!doc.isObject())
+            return;
+
+        const QJsonObject obj = doc.object();
+        m_downloadActive = obj.value(QStringLiteral("active")).toBool();
+        m_downloadingModelId = obj.value(QStringLiteral("id")).toString();
+        m_downloadBytesDone = static_cast<qint64>(obj.value(QStringLiteral("bytes_downloaded")).toDouble());
+        m_downloadBytesTotal = static_cast<qint64>(obj.value(QStringLiteral("bytes_total")).toDouble());
+        m_downloadPercent = obj.value(QStringLiteral("percent")).toDouble();
+        m_downloadDone = obj.value(QStringLiteral("done")).toBool();
+        m_downloadError = obj.value(QStringLiteral("error")).toString();
+        emit downloadStateChanged();
+
+        if (!m_downloadActive) {
+            m_downloadPollTimer->stop();
+            if (m_downloadDone)
+                refreshCatalog();
         }
     });
 }
