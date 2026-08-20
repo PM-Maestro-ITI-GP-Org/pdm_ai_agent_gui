@@ -25,7 +25,7 @@ project(PdMAiAgent
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Quick Qml Widgets QuickControls2)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Quick Qml Widgets QuickControls2 Network)
 
 qt_standard_project_setup(REQUIRES 6.5)
 
@@ -51,10 +51,13 @@ qt_add_qml_module(pdm_agent
     SOURCES
         agentapp.h
         agentapp.cpp
+        src/agentclient.h
+        src/agentclient.cpp
     QML_FILES
         AgentPage.qml
         SystemMapView.qml
         LifecycleView.qml
+        SettingsView.qml
         RepoCard.qml
         StageCard.qml
 )
@@ -63,6 +66,9 @@ qt_add_qml_module(pdm_agent
 target_include_directories(pdm_agent PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
 )
+target_include_directories(pdm_agent PRIVATE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+)
 
 target_link_libraries(pdm_agent PUBLIC
     pdm_core
@@ -70,6 +76,7 @@ target_link_libraries(pdm_agent PUBLIC
     Qt6::Qml
     Qt6::Widgets
     Qt6::QuickControls2
+    Qt6::Network
 )
 
 #

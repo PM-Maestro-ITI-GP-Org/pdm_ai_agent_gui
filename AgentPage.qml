@@ -29,7 +29,9 @@ Item {
     Material.theme: Theme.dark ? Material.Dark : Material.Light
     Material.accent: Theme.primary
 
-    property int currentView: 0   // 0 = system map, 1 = lifecycle
+    property int currentView: 0   // 0 = system map, 1 = lifecycle, 2 = settings
+
+    AgentClient { id: assistant }
 
     ColumnLayout {
         anchors.fill: parent
@@ -65,6 +67,7 @@ Item {
 
                 TabButton { text: qsTr("System Map") }
                 TabButton { text: qsTr("Lifecycle") }
+                TabButton { text: qsTr("Settings") }
             }
         }
 
@@ -82,6 +85,7 @@ Item {
 
             SystemMapView {}
             LifecycleView {}
+            SettingsView { assistant: assistant }
         }
     }
 }
