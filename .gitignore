@@ -1,0 +1,6 @@
+build/
+build-*/
+.qtc_clangd/
+CMakeLists.txt.user*
+__pycache__/
+.venv/
