@@ -5,12 +5,18 @@ and a standalone app in its own right.
 
 ## State
 
-**Scaffolding only. No code yet, and the scope is still being settled.**
+**A1 done: a real tab, two deterministic views, no AI yet.** Integrated
+against the contract — library + `PdM.Agent` QML module, builds inside
+Maestro and standalone. `pdm-app.cmake` is present, so Maestro's configure
+step reports `agent: integrated as pdm_agent (PdM.Agent)`, not a placeholder.
 
-This repository exists so the tab has a home and the submodule slot is real.
-It carries no `pdm-app.cmake` marker yet, so Maestro's build skips it and the
-tab keeps its placeholder — see the app-discovery block in Maestro's top-level
-`CMakeLists.txt`.
+- **System Map** — the eight repos in this toolchain, each linking to its own
+  docs.
+- **Lifecycle view** — the ML pipeline stages, with a visible banner marking
+  the AI-repo-sourced parts provisional while that repo is being reworked.
+
+**Next: A2a**, a Python server outside Qt that the tab talks to over HTTP —
+see `docs/SCOPE.md` §6 and its last section for exactly what that means.
 
 ## What it is meant to be
 
@@ -35,12 +41,21 @@ other.
 
 | | |
 |---|---|
-| Command execution | **Read-only** in the first version. `docs/SCOPE.md` §7 explains why, with the bench failure that motivates it |
-| Model hosting | **Local** — this laptop, or a second one on the bench acting as a server. No cloud API |
+| "Act" commands (run a scenario, fetch, OTA) | **Still read-only.** `docs/SCOPE.md` §8 explains why, with the bench failure that motivates it |
+| Read and navigate tools (list recordings, switch tabs) | **In scope for A2b.** Can't affect the system — `docs/SCOPE.md` §6.2 |
+| The AI itself | **Outside Qt**, a local Python server reached over HTTP — `docs/SCOPE.md` §6.1 |
+| Model hosting | **Local via Ollama** — this laptop or a second one as a server, model name and host both configuration. `qwen2.5:3b` here today; a GTX 1650 (`qwen2.5:1.5b`-class) is the design floor, not this laptop. `docs/SCOPE.md` §6.4 |
+| Tool-calling | **Model-driven, with a deterministic pattern-matching fallback** for weak models or failed calls — `docs/SCOPE.md` §6.3 |
+| Retrieval | **Semantic search (embeddings)**, no vector database needed at this corpus size — `docs/SCOPE.md` §6.5 |
 | Text to speech | **No.** That belonged to Layer 5, which this is not |
-| First work | **A0: reconcile the documentation corpus.** No AI involved, and the highest-value step |
 
 ## Build
 
-Nothing to build yet. No `pdm-app.cmake` marker, so Maestro's configure step
-reports `PdM app 'agent': absent -- placeholder tab` and the build is unchanged.
+```bash
+cmake -B build -DCMAKE_PREFIX_PATH=$HOME/Qt/6.10.3/gcc_64
+cmake --build build -j$(nproc)
+./build/agent_gui
+```
+
+Qt 6.5+, CMake 3.21+. Same shape as `pdm_mlops_gui` — see its README for the
+reasoning behind the standalone/library split.

@@ -5,8 +5,8 @@ is built yet. This is the decision record: what was asked for, what was ruled
 out and why, and what the first steps are.
 
 Read this before writing any code for this repository. If you are a fresh
-session picking this up, read [§9](#9-where-to-start-reading) first — it tells
-you which files to open in which order.
+session picking this up, read [§10](#10-where-to-start-reading) first — it
+tells you which files to open in which order.
 
 ---
 
@@ -71,11 +71,12 @@ output, and does not depend on the RPi5.
 to Layer 5, and Layer 5 is not this. Do not add a speech dependency to this repo
 without a new conversation.
 
-### 3.2 Command execution — **read-only in the first version**
+### 3.2 Command execution — **read-only "act" tools in the first version**
 
-The agent may inspect and report. It may not change anything. See §7 for the
-full reasoning, which is not caution for its own sake — it comes out of a
-failure that already happened on this hardware.
+The agent may inspect, report, and navigate the UI. It may not change system
+or hardware state. See §8 for the full reasoning, which is not caution for its
+own sake — it comes out of a failure that already happened on this hardware.
+§6.2 has the tool tiers this splits into.
 
 ### 3.3 Where the model runs — **local, or a local server**
 
@@ -89,7 +90,8 @@ decision — it is why the first two phases contain no model at all.
 Design consequence: the model is reached over a URL, so "localhost" and "the
 other laptop" are the same code path with a different setting. Put the provider
 behind a thin interface from the first line, and make the no-model path a
-first-class mode rather than an error state.
+first-class mode rather than an error state. Settled further, and in more
+hardware detail, in §6.
 
 ---
 
@@ -135,9 +137,14 @@ half-built thing waiting on the next.
 |---|---|---|
 | **A0** | **Reconcile the documentation corpus** | No |
 | **A1** | Deterministic system map + lifecycle view | No |
-| **A2** | Grounded Q&A with mandatory citations | Yes |
+| **A2a** | Grounded Q&A with mandatory citations — whole-corpus context, no retrieval infra yet | Yes |
+| **A2b** | Semantic search (embeddings) + read tools + navigate tools | Yes |
 | **A3** | Stateful walkthrough — "you are here, this is next" | Yes |
-| **A4** | Read-only command catalogue | Yes |
+| **A4** | Act tools: a fixed, human-confirmed command catalogue | Yes |
+
+A2 split into 2a/2b on 2026-08-21 once tool-calling and navigation entered the
+conversation — see §6. A2a proves the model-call-and-cite loop with the
+smallest possible plumbing; A2b is where retrieval and tools actually land.
 
 **A0 and A1 contain no AI whatsoever, and that is deliberate.** They are also
 where most of the value is. A tab that ships at the end of A1 already satisfies
@@ -205,7 +212,118 @@ hallucination risk, and it is the structure A3's walkthrough later narrates.
 
 ---
 
-## 6. Capability D — what a good answer looks like
+## 6. A2 architecture: retrieval, tools, and hardware tiers
+
+Decided 2026-08-21, in a follow-up conversation once the ask grew from "answer
+questions" to "answer questions, retrieve live data, and drive the UI." Same
+rule as §3: settled, revisit explicitly rather than silently.
+
+### 6.1 The AI lives outside Qt, as its own process
+
+Confirmed 2026-08-21. A small local server — Python, because that is what
+talks to local-model runtimes and embedding libraries well — owns the corpus,
+the retrieval, the tool dispatch, and the call to the model. The Qt app is a
+thin HTTP client that sends a question and renders an answer with citations.
+
+This is not a new idea in this codebase, it is the existing one applied again:
+`pdm_mlops_gui` does not reimplement `gate.py`'s thresholds in C++, it reads
+`gate.py`'s own verdict, because duplicating logic across languages is how two
+copies quietly drift apart (`docs/ARCHITECTURE.md`, "ML/Ops: a new GUI, not the
+AI repo as a submodule"). The agent's Python server is the same call: the
+language good at this job does this job, out of process, reached over a URL
+the Qt side already had to support for local-vs-second-laptop (§3.3).
+
+### 6.2 Two different things were both called "tool calling," and they are not the same cost
+
+**Retrieval doesn't need the model to call anything.** The server can look at
+the answer's source directly — read `model_out/metrics.json`, read a doc,
+read `QSettings` — *before* it ever prompts the model. This is RAG with a
+slightly wider notion of "document" (some of them are live JSON, not
+prose), and it costs nothing in reliability.
+
+**Deciding when to switch tabs or fetch live state mid-conversation is
+different** — that is the model choosing, at runtime, which function to call.
+It needs a model that is actually competent at structured tool-calling, and a
+channel from the server into the running app. Three tool tiers, by what they
+can do if the model gets them wrong:
+
+| Tier | Example | Can it hurt anything if called wrongly? | Status |
+|---|---|---|---|
+| **Read** | list recordings, read the gate report, read a doc | No | Build in A2b |
+| **Navigate** | switch tab, scroll to a section, highlight a card | No — it's UI state, not system state | Build in A2b, same step as Read (decided 2026-08-21) |
+| **Act** | run a scenario, fetch from the rig, push OTA | **Yes — hardware, per §8** | A4, unchanged by this section |
+
+**Navigate reuses `MessageBus`, it does not invent a new mechanism.** Motor
+Control already publishes `recording.start`/`recording.stop` for Data
+Collection to subscribe to (`docs/STATUS.md`, "M3"). The agent publishing
+`agent.navigate` with `{tab, section}` for tabs to subscribe to is the same
+pattern, not a new one — reusing proven infrastructure rather than growing a
+second cross-tab channel.
+
+**Read tools split by how much they cost to build**, and this is the honest
+state of it: reading files already on disk (docs, config, recordings
+directories, `metrics.json`) needs no change anywhere and can start
+immediately. Reading a tab's *live in-memory* state (is a scenario running
+right now) needs that tab's own repo to start publishing it on `MessageBus` —
+a small change, but one to somebody else's app, not this one. This is open
+question 3 below, now partially resolved: file-backed state first, live tab
+state as a follow-up that touches other repos.
+
+### 6.3 Tool-calling mode: model-driven, with a deterministic fallback
+
+Decided 2026-08-21. The model picks which tool to call when it can; the server
+falls back to pattern-matching the question to a tool when the model doesn't
+support structured tool calls, or its tool call fails to parse or execute.
+Never a silent failure — same "never fail silently" rule the rest of this
+toolchain already follows (`docs/RIG_ACCESS.md`).
+
+This also means `tools_mode` is a per-model setting, not a global one: a small
+model on weak hardware is more likely to need the fallback than a large one —
+see §6.4 — so the fallback path has to be exercised and correct from the
+start, not bolted on once a weak model actually misbehaves.
+
+### 6.4 Hardware tiers, and why the target floor is a GTX 1650, not this laptop
+
+This laptop (RTX 3050 Ti, 4 GB VRAM, Ampere) is not the constraint to design
+for — it was explicitly asked to also run on **weaker** hardware, and to scale
+*up* to a stronger machine without a rewrite. Model choice and tool-calling
+mode are both configuration, never hard-coded, so the same server code runs
+across the whole range:
+
+| Tier | Example GPU | VRAM | Chat model | Tool-calling |
+|---|---|---|---|---|
+| **Low (the design floor)** | GTX 1650 | 4 GB, Turing, no tensor cores | `qwen2.5:1.5b` or `llama3.2:1b`, Q4 | Unreliable — expect the deterministic fallback to fire often |
+| **Current** | RTX 3050 Ti | 4 GB, Ampere | `qwen2.5:3b`, Q4 | Usable — Qwen2.5's small models were trained for structured tool use |
+| **High** | e.g. RTX 4070+ / 3090 | 12–24 GB | `qwen2.5:14b` or `32b` | Reliable multi-step tool use |
+
+The GTX 1650 is the more useful number precisely because it is *weaker* than
+what is on hand — older architecture, no tensor cores, the same or less VRAM —
+so "works on a 1650" is close to a worst-case floor, while "works on this
+laptop" would not have caught anything.
+
+**Runtime: Ollama.** Weighed against llama.cpp server directly, vLLM, LM
+Studio, and loading a model via `transformers` in-process. Ollama wins for
+this project specifically because it serves both a chat model and an
+embedding model from one process with one OpenAI-compatible API, and moving
+the model to a second laptop is an environment variable, not a code change —
+which is exactly §3.3's requirement. Because §6.1 already puts the AI outside
+Qt, this choice is cheap to reverse: swapping runtimes later touches the
+Python server only, never the Qt app.
+
+### 6.5 Retrieval: embeddings, staged after whole-corpus context
+
+The destination is semantic search (embeddings + vector similarity) — decided
+2026-08-21. The staging is what changed: at this corpus's size (a few hundred
+KB across this repo and the six app repos' docs, per §8 open question 2), a
+vector database is not needed — cosine similarity over an in-process array of
+embeddings is small enough to write directly. So there is no separate
+keyword-search stage to build in between; A2a proves the model-and-citation
+loop with no retrieval at all (small enough to paste whole), and A2b adds
+embeddings directly.
+
+---
+
+## 7. Capability D — what a good answer looks like
 
 When the developer asks *"what if my data is audio?"* or *"what if I have
 hundreds of columns instead of a time series?"*, the valuable answer is **not**
@@ -229,7 +347,7 @@ A0 matters.
 
 ---
 
-## 7. Why commands are read-only, with the evidence
+## 8. Why "act" commands are read-only, with the evidence
 
 The ask was: the developer writes what he needs, confirms it, and watches the
 real system respond. That is reasonable and it is the eventual target. What is
@@ -256,9 +374,10 @@ built:
   and it cannot emit raw bytes.
 - **Every proposal renders as a card a human clicks** — stating what it does,
   what it touches, and whether the motor turns.
-- **Read-only actions run immediately**: describe state, list recordings, read
-  the gate report, tail the board log. This is most of what is actually useful,
-  and it is all of version one.
+- **Read and navigate tools run immediately**: describe state, list recordings,
+  read the gate report, tail the board log, switch tabs, scroll to a section.
+  This is most of what is actually useful, and per §6.2 none of it can affect
+  the system — it is all of A2b.
 - **Motor-turning actions are excluded**, and there is a design reason beyond
   safety: the scenario grid is already right there, already has a confirmation
   dialog, and is already the better UI for starting a run. The agent adds risk
@@ -268,29 +387,31 @@ built:
 
 ---
 
-## 8. Open questions
+## 9. Open questions
 
-Not blocking A0 or A1. Worth settling before A2.
+Not blocking A0 or A1.
 
-1. **Which local model, and running where.** "Local, or a second laptop as a
-   server" is decided; the specific runtime is not. Whatever it is, reach it
-   over a URL so both cases are one code path.
-2. **What exactly is in the corpus.** All markdown in all seven repos is the
-   obvious start. Source files are a judgement call — they are the ground truth
-   when prose disagrees, but they are also most of the tokens.
-3. **How the tab reads state from other tabs.** The integration contract says
-   `MessageBus`, never a direct dependency on another app repo
-   (`docs/INTEGRATION_CONTRACT.md`). Some state the agent wants may not be
-   published yet.
+1. ~~Which local model, and running where.~~ **Resolved in §6.4: Ollama,
+   model name and host both configuration, `qwen2.5:3b` on this laptop today,
+   `qwen2.5:1.5b`-class as the floor for weaker hardware.**
+2. **What exactly is in the corpus.** This repo plus the six app repos' own
+   docs (settled as A0/A2's reachable scope) is the obvious start. Source
+   files are a judgement call for later — ground truth when prose disagrees,
+   but also most of the tokens.
+3. **How the tab reads state from other tabs.** *Partially resolved in §6.2:*
+   file-backed state (config, recordings on disk, `metrics.json`) needs no
+   change anywhere and is in scope for A2b. A tab's *live* in-memory state
+   still needs that tab's own repo to publish it on `MessageBus` — a real
+   follow-up, not blocking, but it touches other repos, not this one.
 4. **Who the developer is.** A teammate joining next month, or a hypothetical
    user for the defence demo? It changes how much the agent should assume.
-5. **`shell/main.cpp` still says `pdm_agent_gui (to be created)`.** The repo is
-   `pdm_ai_agent_gui` and it exists. One string, left alone deliberately so the
-   submodule commit stayed pure.
+5. **`shell/main.cpp` still says `pdm_agent_gui (to be created)`.** ~~One
+   string, left alone deliberately~~ **Fixed** when A1 wired the tab in —
+   the registry entry now reads `pdm_ai_agent_gui`.
 
 ---
 
-## 9. Where to start reading
+## 10. Where to start reading
 
 In this order. Do not skip the first two; everything else assumes them.
 
@@ -303,23 +424,31 @@ In this order. Do not skip the first two; everything else assumes them.
 | 5 | `AI/docs/README.md` and `AI/host_pipeline/README.md` | The ML lifecycle the agent has to explain — read them noting the contradiction in §5 |
 | 6 | `GP/ai/pm_readme.md` | The original design. Read it to understand Layer 5 **and to confirm this tab is not it** |
 
-### For the next session, concretely
+### Status as of 2026-08-21
 
-The next piece of work is **A0**, and it is documentation reconciliation, not
-programming.
+**A1 is done and merged** — the system map and lifecycle view are real, both
+build inside Maestro and standalone, and two genuine QML bugs were found and
+fixed by actually running the app rather than trusting the compiler (see the
+`pdm_ai_agent_gui` commit history: a `ListElement` script-value error, and a
+delegate-property-shadowing repeat of `docs/STATUS.md` bug 1). The Maestro-side
+half of **A0** (reading this repo and the six app repos' own docs against their
+code, not against each other) was never done as its own dedicated pass — it is
+not blocking, but a fresh session should not assume it is finished either.
 
-**The `AI` repo half of it is not available.** Someone else is reworking that
-repo as of 2026-08-20; contradictions 1 and 2 in §5 will be settled by that
-work, not by us. Do not edit it, do not resolve them from outside, and do not
-treat them as blocking. Zee will say when it is done and worth re-checking —
-at which point the questions to answer are: which pipeline is authoritative,
-and what should the ML/Ops tab be pointing at.
+**The `AI` repo half of A0 is still not available.** Someone else is reworking
+that repo; do not edit it or resolve contradictions 1 and 2 in §5 from the
+outside. Zee will say when it is done.
 
-**What can proceed now** is the Maestro-side corpus: this repo, the shell's
-own `docs/`, and the six app repos' READMEs and `docs/`. Read them against the
-code rather than against each other — every contradiction found so far had the
-same shape, prose more confident than the source it describes.
+**Next piece of work is A2a**, per §6: a Python server, outside Qt, with a
+health endpoint the Qt side can show connected/not-connected for — no model,
+no documents, no answers yet. That is the whole first commit. Then, as
+separate commits: the model call with the whole reachable corpus (§9 open
+question 2) pasted into the prompt and required to cite its source file, no
+retrieval infrastructure yet (§6.5) — that is A2a complete. A2b adds
+embeddings-based retrieval plus the read and navigate tools from §6.2, with
+model-driven tool-calling and the deterministic fallback from §6.3.
 
-Do not start A2 before the reachable part of A0 is done. An assistant built on
-a corpus that contradicts itself will teach the contradictions with a straight
-face, and the person it is teaching has, by design, nobody to check it against.
+Model target for A2a/A2b on this laptop: `qwen2.5:3b` via Ollama (§6.4). Keep
+the model name and the tool-calling mode both in configuration from the first
+line — the whole reason §6.4 exists is that this has to run on hardware
+weaker than what it is being built on.
