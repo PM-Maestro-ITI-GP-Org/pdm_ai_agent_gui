@@ -155,6 +155,17 @@ out, because confidence is precisely what the reader is relying on.
 Three live contradictions were found in about twenty minutes of reading on
 2026-08-20. There are likely more; finding them is part of A0.
 
+**A0 splits in two, and only one half is ours.** Contradictions 1 and 2 below
+are both inside the `AI` repo, which **someone else is actively reworking as of
+2026-08-20.** Do not edit that repo, and do not resolve those two from the
+outside — the restructure in flight will settle them, and a guess made here
+would collide with it. Zee will say when it is finished and worth re-checking.
+Until then they are *recorded, not open work.*
+
+What is left in A0 and can proceed: the Maestro-side corpus — this repo's own
+docs plus the six app repos' READMEs and `docs/`. Contradiction 3 (`RUN_MIN`)
+lives in `esp_dac` and is Zee's call, not a documentation fix.
+
 1. **`AI/README.md` contradicts `AI/host_pipeline/README.md`.** The root README
    says *"nothing under `host_pipeline/`, `rpi_pipeline/` or `MLops/` is
    implemented yet."* `host_pipeline/README.md` says *"All four are
@@ -295,11 +306,20 @@ In this order. Do not skip the first two; everything else assumes them.
 ### For the next session, concretely
 
 The next piece of work is **A0**, and it is documentation reconciliation, not
-programming: establish which pipeline in the `AI` repo is authoritative, get
-`AI/README.md` and `AI/host_pipeline/README.md` to agree, and decide what the
-ML/Ops tab should be pointing at. Ask the repo owner rather than guessing —
-contradiction 2 in §5 is a question about intent, not a typo.
+programming.
 
-Do not start A2 before A0 is done. An assistant built on a corpus that
-contradicts itself will teach the contradictions with a straight face, and the
-person it is teaching has, by design, nobody to check it against.
+**The `AI` repo half of it is not available.** Someone else is reworking that
+repo as of 2026-08-20; contradictions 1 and 2 in §5 will be settled by that
+work, not by us. Do not edit it, do not resolve them from outside, and do not
+treat them as blocking. Zee will say when it is done and worth re-checking —
+at which point the questions to answer are: which pipeline is authoritative,
+and what should the ML/Ops tab be pointing at.
+
+**What can proceed now** is the Maestro-side corpus: this repo, the shell's
+own `docs/`, and the six app repos' READMEs and `docs/`. Read them against the
+code rather than against each other — every contradiction found so far had the
+same shape, prose more confident than the source it describes.
+
+Do not start A2 before the reachable part of A0 is done. An assistant built on
+a corpus that contradicts itself will teach the contradictions with a straight
+face, and the person it is teaching has, by design, nobody to check it against.
