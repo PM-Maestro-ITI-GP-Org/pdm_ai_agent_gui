@@ -55,6 +55,7 @@ qt_add_qml_module(pdm_agent
         src/agentclient.cpp
     QML_FILES
         AgentPage.qml
+        ChatView.qml
         SystemMapView.qml
         LifecycleView.qml
         SettingsView.qml

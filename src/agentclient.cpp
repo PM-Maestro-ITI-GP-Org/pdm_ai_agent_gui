@@ -22,6 +22,7 @@ static constexpr auto kDefaultServerUrl = "http://127.0.0.1:8420";
 static constexpr int kPollIntervalMs = 5000;
 static constexpr int kDownloadPollIntervalMs = 500;
 static constexpr int kRequestTimeoutMs = 4000;
+static constexpr int kChatTimeoutMs = 120000;
 
 AgentClient::AgentClient(QObject *parent)
     : QObject(parent)
@@ -273,6 +274,46 @@ void AgentClient::pollDownloadStatus()
             if (m_downloadDone)
                 refreshCatalog();
         }
+    });
+}
+
+void AgentClient::askQuestion(const QString &text)
+{
+    m_chatBusy = true;
+    m_chatAnswer.clear();
+    m_chatError.clear();
+    emit chatStateChanged();
+
+    QNetworkRequest req{ QUrl(m_serverUrl + QStringLiteral("/chat")) };
+    req.setTransferTimeout(kChatTimeoutMs);
+    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+
+    const QJsonObject body{ { QStringLiteral("message"), text } };
+    QNetworkReply *reply = m_net->post(req, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        reply->deleteLater();
+
+        const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+        const QJsonObject obj = doc.object();
+
+        if (reply->error() != QNetworkReply::NoError) {
+            m_chatError = obj.value(QStringLiteral("error")).toString(
+                tr("could not reach %1").arg(m_serverUrl));
+            m_chatBusy = false;
+            emit chatStateChanged();
+            return;
+        }
+
+        if (!doc.isObject() || !obj.contains(QStringLiteral("answer"))) {
+            m_chatError = tr("server sent an unreadable reply");
+            m_chatBusy = false;
+            emit chatStateChanged();
+            return;
+        }
+
+        m_chatAnswer = obj.value(QStringLiteral("answer")).toString();
+        m_chatBusy = false;
+        emit chatStateChanged();
     });
 }
 

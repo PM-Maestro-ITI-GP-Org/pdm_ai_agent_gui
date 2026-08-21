@@ -29,7 +29,7 @@ Item {
     Material.theme: Theme.dark ? Material.Dark : Material.Light
     Material.accent: Theme.primary
 
-    property int currentView: 0   // 0 = system map, 1 = lifecycle, 2 = settings
+    property int currentView: 0   // 0 = ask, 1 = system map, 2 = lifecycle, 3 = settings
 
     AgentClient { id: assistant }
 
@@ -52,7 +52,7 @@ Item {
                     color: Theme.textPrimary
                 }
                 Text {
-                    text: qsTr("Developer assistant for the PdM toolchain — read-only, no model yet")
+                    text: qsTr("Developer assistant for the PdM toolchain — read-only tool calls, no model side effects")
                     font.pixelSize: Theme.fontSmall
                     color: Theme.textSecondary
                 }
@@ -65,6 +65,7 @@ Item {
                 currentIndex: root.currentView
                 onCurrentIndexChanged: root.currentView = currentIndex
 
+                TabButton { text: qsTr("Ask") }
                 TabButton { text: qsTr("System Map") }
                 TabButton { text: qsTr("Lifecycle") }
                 TabButton { text: qsTr("Settings") }
@@ -83,6 +84,7 @@ Item {
             Layout.fillHeight: true
             currentIndex: root.currentView
 
+            ChatView { assistant: assistant }
             SystemMapView {}
             LifecycleView {}
             SettingsView { assistant: assistant }

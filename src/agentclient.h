@@ -48,6 +48,10 @@ class AgentClient : public QObject
     Q_PROPERTY(bool downloadDone READ downloadDone NOTIFY downloadStateChanged)
     Q_PROPERTY(QString downloadError READ downloadError NOTIFY downloadStateChanged)
 
+    Q_PROPERTY(bool chatBusy READ chatBusy NOTIFY chatStateChanged)
+    Q_PROPERTY(QString chatAnswer READ chatAnswer NOTIFY chatStateChanged)
+    Q_PROPERTY(QString chatError READ chatError NOTIFY chatStateChanged)
+
 public:
     explicit AgentClient(QObject *parent = nullptr);
 
@@ -69,12 +73,17 @@ public:
     bool downloadDone() const { return m_downloadDone; }
     QString downloadError() const { return m_downloadError; }
 
+    bool chatBusy() const { return m_chatBusy; }
+    QString chatAnswer() const { return m_chatAnswer; }
+    QString chatError() const { return m_chatError; }
+
     void setServerUrl(const QString &v);
     void setSelectedModel(const QString &v);
 
     Q_INVOKABLE void checkConnection();
     Q_INVOKABLE void refreshCatalog();
     Q_INVOKABLE void downloadModel(const QString &id);
+    Q_INVOKABLE void askQuestion(const QString &text);
 
 signals:
     void serverUrlChanged();
@@ -83,6 +92,7 @@ signals:
     void selectedModelChanged();
     void modelCatalogChanged();
     void downloadStateChanged();
+    void chatStateChanged();
 
 private:
     void load();
@@ -115,6 +125,10 @@ private:
     QString m_downloadError;
 
     QTimer *m_downloadPollTimer = nullptr;
+
+    bool m_chatBusy = false;
+    QString m_chatAnswer;
+    QString m_chatError;
 };
 
 } // namespace Agent
