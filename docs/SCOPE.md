@@ -277,6 +277,17 @@ support structured tool calls, or its tool call fails to parse or execute.
 Never a silent failure — same "never fail silently" rule the rest of this
 toolchain already follows (`docs/RIG_ACCESS.md`).
 
+**Amended 2026-08-21, later the same day: the default is inverted.** The
+deterministic retrieve-then-answer path is what runs; model-driven tool
+calling is the opt-in upgrade, switched on by a capability probe at startup
+and switched back off by a parse-failure counter during a session. Same two
+paths, opposite default, for a reason this section already argued and then
+did not follow through on: if the fallback "has to be exercised and correct
+from the start," it should be the path that always runs, not the one that
+only appears when something breaks. Published benchmarks put Qwen2.5-3B at
+roughly half of tool calls correct, so on the design floor the fallback is
+the common case, not the exception.
+
 This also means `tools_mode` is a per-model setting, not a global one: a small
 model on weak hardware is more likely to need the fallback than a large one —
 see §6.4 — so the fallback path has to be exercised and correct from the
@@ -310,6 +321,32 @@ which is exactly §3.3's requirement. Because §6.1 already puts the AI outside
 Qt, this choice is cheap to reverse: swapping runtimes later touches the
 Python server only, never the Qt app.
 
+**Corrected 2026-08-21, after building it.** Both backends are supported and
+`llamacpp` is the default, because that is what got run. The claim above
+about Ollama's one-process advantage is real and now confirmed from the other
+side: `llama-server` loads exactly one model per process, so llamacpp needs a
+*second* server for embeddings on a second port. Router mode and `llama-swap`
+were looked at and rejected — both keep one model resident and pay a 3–10 s
+reload, and that reload would land on every single question, since every
+question embeds before it chats.
+
+**Measured on this laptop, not estimated:**
+
+| | |
+|---|---|
+| Chat + embedding models resident together | 2,619 MiB of 4,096 — both fit, no swapping |
+| Embedding the whole corpus, cold | 3.1 s on GPU, once; cached thereafter |
+| Question to cited answer | ~3.3 s |
+| Prompt sent to the model | ~1,970 tokens at top-k 5, from ~25,000 before retrieval |
+
+**Put the embedding model on the CPU, not the GPU.** Running both on the card
+produced `CUDA error: unspecified launch failure`, killing *both* server
+processes at the same instant — a GPU-level reset, not a crash in either
+program. The embedder is 262 MB and embedding is not on the latency path the
+way generation is, so `-ngl 0` costs little and removes the second CUDA
+context entirely. On the GTX 1650 tier this is the recommended layout rather
+than a workaround: all of the VRAM goes to the chat model.
+
 ### 6.5 Retrieval: embeddings, staged after whole-corpus context
 
 The destination is semantic search (embeddings + vector similarity) — decided
@@ -320,6 +357,40 @@ embeddings is small enough to write directly. So there is no separate
 keyword-search stage to build in between; A2a proves the model-and-citation
 loop with no retrieval at all (small enough to paste whole), and A2b adds
 embeddings directly.
+
+### 6.6 Citations are checked, not trusted — added 2026-08-21
+
+§7 calls citation a hard requirement. Built and run, the 3B model does not
+meet it on its own, and the specific way it fails is worth writing down.
+
+Asked what breaks if the data is audio, it answered correctly *out of*
+`SCOPE.md` §7 and then cited the ESP32 firmware section instead. Not a
+hallucinated answer — a correct answer with a wrong source, which is the
+harder failure to notice, and the one a reader following the citation is most
+damaged by. Published work on small models describes exactly this: they cite
+a topically adjacent chunk rather than the one they used.
+
+So the server embeds the answer and scores it against every section it
+retrieved. If what the answer resembles is not among what it cited, the
+response says so, and the UI shows three outcomes rather than two: cited and
+checked, cited but not matching, cited nothing at all.
+
+Two things this is not. It is **not** an entailment check — it catches citing
+the wrong section, not a fluent claim absent from every section; an NLI model
+would be stronger and needs VRAM this tier does not have. And the threshold
+is **provisional**: a first version demanded the cited source be the single
+best match, and it accused a correct one-sentence answer about the Qt version
+over a gap of 0.039, because on a short answer cosine measures topic rather
+than fact. It now allows a margin, and answers under 40 characters are not
+checked at all. Both numbers were set against a six-question sample. They
+want a real eval set before anyone calls them tuned.
+
+**Two decisions follow from this that are cheap now and expensive later.**
+The model cites `[2]`, not `(docs/STATUS.md § pdm_app_core)` — it garbles a
+filename far more readily than a digit, and the server maps the digit back
+with no chance of a typo. And the strongest-matching section is placed
+*last*, immediately above the question, because attention is weakest in the
+middle of a context window and small models suffer that most.
 
 ---
 
@@ -439,16 +510,185 @@ not blocking, but a fresh session should not assume it is finished either.
 that repo; do not edit it or resolve contradictions 1 and 2 in §5 from the
 outside. Zee will say when it is done.
 
-**Next piece of work is A2a**, per §6: a Python server, outside Qt, with a
-health endpoint the Qt side can show connected/not-connected for — no model,
-no documents, no answers yet. That is the whole first commit. Then, as
-separate commits: the model call with the whole reachable corpus (§9 open
-question 2) pasted into the prompt and required to cite its source file, no
-retrieval infrastructure yet (§6.5) — that is A2a complete. A2b adds
-embeddings-based retrieval plus the read and navigate tools from §6.2, with
-model-driven tool-calling and the deterministic fallback from §6.3.
+**A2a is done.** The Python server, the Qt client, the model catalogue and
+download, and the chat box all exist and are in the commit history.
 
-Model target for A2a/A2b on this laptop: `qwen2.5:3b` via Ollama (§6.4). Keep
-the model name and the tool-calling mode both in configuration from the first
-line — the whole reason §6.4 exists is that this has to run on hardware
-weaker than what it is being built on.
+**A2b's retrieval half is done and has been run against a real model** — the
+first thing in this repo that has. Header-aware chunking (136 citable
+sections), nomic-embed-text v1.5, cosine over a plain Python list with no
+vector database and no numpy, an index cached by content hash so editing one
+section re-embeds one chunk, `/search` and `/index/rebuild` alongside
+`/chat`, and the citation check in §6.6. The Qt side shows the retrieved
+sections as chips and distinguishes checked, unchecked and mismatched.
+
+This also settled §9's open question 2, by measuring it rather than guessing:
+the reachable corpus is 98,717 bytes across 11 documents, about 25,000
+tokens. It never fit — the A2a build was asking a 4,096-token context to hold
+a 25,000-token prompt, and retrieval is what made the chat box work at all
+rather than making it faster.
+
+**What is left in A2b** is the tool half: `search_docs`, `read_file`,
+`list_repo` and `navigate_to`, the startup capability probe, and the
+parse-failure counter, with the deterministic path as the default per §6.3 as
+amended. `navigate_to` publishes `agent.navigate` on `MessageBus` (§6.2) and
+validates its destination against the five real tab names — an allowlist, not
+a free string, because the model will eventually emit something that is not a
+tab.
+
+**Server side of the tool half is done, unrun against a live backend, same
+caveat as retrieval before it.** `server/tools.py` carries all four tools and
+their OpenAI-style schema. Three are plain server-side functions: `list_repo`
+answers from the live `pdm-app.cmake` markers rather than a copy of CLAUDE.md's
+table, so it cannot go stale the way the ML/Ops account did; `read_file` is
+scoped to the same `CORPUS_PATHS` allowlist `/chat` retrieves over, not an
+arbitrary path — reading `model_out/metrics.json` or a recording directory is
+real and in scope per §6.2, but is its own allowlist to design, not a side
+effect of this one; `search_docs` wraps the same `Index.search` retrieval
+already runs automatically, exposed for the model to re-call with a different
+query. `navigate_to` validates and hands back an instruction — it does not
+touch `MessageBus` itself, since that lives in the Qt process; wiring the Qt
+client to read `tool_calls` off the `/chat` response and actually publish is
+not done.
+
+**No separate startup probe.** It turned out to duplicate `_ensure_index`'s
+own reasoning: probing at process start would either block startup on a
+backend that isn't up yet, or send a request nothing depends on. Folded into
+the first real `/chat` call instead — offer `tools`, and if the backend 400s
+specifically because of that field, that *is* the probe, and tools switch off
+for the rest of the session. The parse-failure counter (§6.3, limit 3) is the
+other way tools switch off: a tool call whose arguments don't parse, or whose
+dispatch errors, counts against it. Bounded to one tool-call round per
+question — not a ReAct loop — because a single round is what
+docs/SCOPE.md §4's "Deferred" verdict on Way 3 was scoped against; build the
+loop once one round is proven not to be enough, not before.
+
+**The Qt side of `navigate_to` is done, 2026-08-23.** `AgentClient` exposes
+`chatToolCalls`; `ChatView.qml` publishes `agent.navigate` on `MessageBus`
+when a `navigate_to` result comes back; `shell/qml/Main.qml` subscribes and
+calls `AppRegistry.indexOf()` + `tabBar.setCurrentIndex()`. Both the
+standalone `agent_gui` and the full Maestro shell build clean with this in.
+**Not run inside the actual app** — verified by build success and `qmllint`,
+not by clicking through a live tab switch; the server-side round trip below
+is what's actually been exercised live.
+
+**Run against a real backend for the first time, 2026-08-23 — and on the
+literal §6.4 design floor:** this session's own machine turned out to carry
+a GTX 1650, 4 GB, the exact card `docs/SCOPE.md` names as the hardware floor
+this has to work on, not a coincidence worth losing. Findings, all new:
+
+- **The pre-supplied wrapper binary this laptop already had crashes
+  `/v1/embeddings` on real multi-chunk corpus batches** — reproducible,
+  independent of GPU/CPU placement, caching, or slot count; a single chunk
+  in isolation was fine, the full 140-chunk batch reliably killed the
+  process. Root cause not found (stripped binary, no symbols). Building
+  `llama-server` from source (`ggml-org/llama.cpp`, commit `8144f31`,
+  `-DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=75`) fixed it outright — no
+  crash, ever, across repeated full-corpus runs.
+- **The fresh build's default physical batch size (512) is too small for a
+  whole-corpus embedding request.** `llama-server` batches every string in
+  one `/v1/embeddings` call together; at 140 chunks the combined token count
+  exceeds 512 and the request 500s with a clear message rather than
+  crashing — a real improvement over the old binary, and an actionable one:
+  `-ub 2048 -b 2048` (matching `n_batch`'s own default) fixed it. Worth
+  folding into `server/README.md`'s example invocation.
+- **Confirms §6.4's GPU-contention finding, on the prebuilt binary specifically:**
+  running the embedding model on the GPU alongside the chat model crashed it
+  immediately on the first real request — same failure mode as before,
+  independently reproduced. Not re-tested against the fresh build; `-ngl 0`
+  (CPU) was used throughout the fresh-build runs below on the strength of
+  this and the existing §6.4 finding, not re-litigated.
+- **A real `navigate_to` round trip worked end to end**, model-driven, no
+  fallback needed: asked to "switch me to the motor control tab," the model
+  emitted a structured `navigate_to` call with `{"tab": "motor_control"}`,
+  the server validated and returned the navigate instruction, and the
+  `tool_calls` field carried it correctly back to the client.
+- **A real `read_file` round trip also worked**, unprompted — asked what
+  tabs Maestro has, the model chose to call `read_file` on
+  `docs/ARCHITECTURE.md` rather than answer from the five sources already in
+  its prompt, then answered from that file's stale "4 tabs" account instead
+  of the corpus's fresher `docs/STATUS.md`. Not a bug in the tool-calling
+  plumbing — a live demonstration of exactly the risk §7 and §6.6 already
+  worried about: grounding in the wrong document is not caught by "a tool
+  call happened."
+- **§6.6's citation-format concern reproduced live, unprompted:** one answer
+  cited its source as `[STATUS.md](docs/STATUS.md)`, a markdown link, not
+  the instructed bare digit. The citation checker correctly found no `[n]`
+  pattern and marked the answer ungrounded — working as designed, on a real
+  failure it was built for, not a synthetic one.
+- **Model used was `Qwen3.5-0.8B-GGUF` (cached on this laptop already), not
+  the `qwen2.5-3b-instruct` §6.4 names as the target.** At under a third the
+  parameters, its tool-call selection was still correct in both trials above
+  — a data point in the fallback's favor, not a substitute for testing the
+  actual target model.
+
+None of this touched `server/test_tools.py`'s stand-in coverage — that suite
+still exercises the code paths a live backend can't easily hit on demand
+(the parse-failure counter, the `ToolsUnsupportedError` probe). Both kinds
+of evidence now exist; neither replaces the other.
+
+**A0 got a piece done, unplanned, and it proved the point.** Three feature
+commits landed on `pdm_motor_control_gui` touching only `.cpp`/`.h`/`.qml`,
+leaving its README describing behaviour the code no longer had — and that
+README is in this agent's corpus, so the agent was answering from it. Docs
+reconciled against the source, `/index/rebuild` run, and the agent now
+answers about the max-RPM limit correctly and cites the section it came from.
+The reconciliation also turned up a real off-by-one nobody had noticed: the
+limit's own maximum, 740 rpm, produces DAC code 247, one below the band's
+true ceiling of 248, which needs 746.1 rpm.
+
+Model target for A2b on this laptop: `qwen2.5-3b-instruct` Q4_K_M, and see
+§6.4 for the measured layout — chat on the GPU, embeddings on the CPU. Keep
+the model name and the tool-calling mode both in configuration — the whole
+reason §6.4 exists is that this has to run on hardware weaker than what it is
+being built on.
+
+**The guided-highlight catalog went from one element to sixteen, across all
+four real tabs, 2026-08-23.** `server/tools.py`'s `HIGHLIGHT_TARGETS` was
+`{"motor_control": ("fetch_panel",)}` and every other tab empty; it now
+carries 5 motor_control elements, 4 data_collection, 3 mlops, 4 ota — see
+that file for the full list and what each one answers. Every entry is wired
+the same way `fetch_panel` was: a real `id` on the container, a
+`BusSubscription` on `agent.highlight`, a pulsing glow-ring `Rectangle`, in
+that tab's own QML.
+
+Three real complications turned up doing this at scale, none visible from a
+single example:
+
+- **Not every page is a plain scroll of Rectangles.** `data_collection` and
+  `ota` both have their own internal view state (`showGraph`;
+  `currentPage` across five sub-screens) that has to be set correctly
+  *before* a flash means anything — the same class of bug the fetch panel's
+  own scroll-into-view fix caught, one level up. `ota`'s dispatch function
+  sets `currentPage`, waits (a `Timer`, mirroring `shell/qml/Main.qml`'s own
+  `highlightRelay`), then calls the destination sub-page's own
+  `highlightXxx()` function by name.
+- **`AppCard` (used throughout `ota`) puts its content inside a padded inner
+  `Item`, not itself.** A glow ring declared as `AppCard`'s own child lands
+  inset by the padding. Every `ota` target is wrapped in a plain `Item`
+  instead, with the `AppCard` and the glow ring as siblings inside it,
+  anchored to the card directly.
+- **`clip: true` cuts off the usual -3px outward-overflowing ring.**
+  `data_collection`'s event log and column picker both need `clip: true` on
+  their own container (a `ListView` that must not overflow it) — their
+  rings sit *inside* the border (`anchors.margins: 1`) instead of around it,
+  the one place the ring recipe isn't identical everywhere.
+- **`mlops` has a visibility gate two of its three targets share:**
+  `gate_checks` and `metrics` only exist once a report has actually loaded
+  (`pipeline.available`). The handler checks this itself and no-ops rather
+  than trusting the model read the caveat correctly — cheaper, and it can't
+  be wrong.
+
+Survey method: four parallel `opencode` agents (model `openrouter/stealth/ox-alpha`,
+via Herdr) read one tab's real QML plus its README each and proposed
+candidates against the fetch_panel pattern as a worked example, including
+explicit rejections with reasons (a modal dialog that doesn't exist until
+opened; a panel invisible unless a queue happens to be active). Three came
+back genuinely strong — better than what a single pass would likely have
+found, including catching the `data_collection`/`ota` internal-view gap
+before any code was written. The fourth (`mlops`) returned empty twice in a
+row, a broken session, not a finding; that survey was done by hand instead
+(the file is small, 357 lines). Real, verified live: asking about the OTA
+update flow correctly triggered `navigate_to` with
+`{"tab": "ota", "section": "update_stepper"}` on 2 of 2 tries once the
+question named the sub-screen specifically enough — this model's variance
+(§6.4) applies exactly as much to which *element* it names as to which tab.

@@ -7,6 +7,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QProcess>
 #include <QSettings>
 #include <QTimer>
 #include <QUrl>
@@ -17,6 +18,7 @@ namespace Agent {
 
 static constexpr auto kKeyServerUrl = "agent/serverUrl";
 static constexpr auto kKeySelectedModel = "agent/selectedModel";
+static constexpr auto kKeyServerStartCommand = "agent/serverStartCommand";
 static constexpr auto kDefaultServerUrl = "http://127.0.0.1:8420";
 
 static constexpr int kPollIntervalMs = 5000;
@@ -47,6 +49,11 @@ void AgentClient::load()
     QSettings s;
     m_serverUrl = s.value(kKeyServerUrl, QString::fromLatin1(kDefaultServerUrl)).toString();
     m_selectedModel = s.value(kKeySelectedModel).toString();
+    /* No default on purpose: without setup.py (or a hand edit) there is no
+       command this class could guess -- it doesn't know where the server
+       checkout lives, and inventing a path would turn "not configured" into
+       "launches something wrong", which is worse. */
+    m_serverStartCommand = s.value(kKeyServerStartCommand).toString();
 }
 
 void AgentClient::setServerUrl(const QString &v)
@@ -66,6 +73,38 @@ void AgentClient::setSelectedModel(const QString &v)
     m_selectedModel = v;
     QSettings().setValue(kKeySelectedModel, m_selectedModel);
     emit selectedModelChanged();
+}
+
+void AgentClient::setServerStartCommand(const QString &v)
+{
+    if (m_serverStartCommand == v)
+        return;
+    m_serverStartCommand = v;
+    QSettings().setValue(kKeyServerStartCommand, m_serverStartCommand);
+    emit serverStartCommandChanged();
+}
+
+void AgentClient::startServer()
+{
+    if (m_serverStartCommand.trimmed().isEmpty()) {
+        setStatusText(tr("no start command — run server/setup.py, or set it in Settings"));
+        emit statusChanged();
+        return;
+    }
+
+    /* Detached, via the user's shell: the command is a full shell line written
+       by setup.py (cd + exec uvicorn ...), and the process must outlive this
+       one -- the GUI closing must not take the model backend down with it.
+       Failure here is almost always "shell missing", which the status line
+       reports rather than pretending a start happened. */
+    if (QProcess::startDetached(QStringLiteral("/bin/sh"), {QStringLiteral("-c"), m_serverStartCommand})) {
+        setStatusText(tr("starting local AI server…"));
+    } else {
+        setStatusText(tr("could not launch: %1").arg(m_serverStartCommand));
+    }
+    emit statusChanged();
+    /* Reachability picks up on the next poll tick; no special-casing the
+       timer for what is, at worst, five extra seconds. */
 }
 
 void AgentClient::setStatusText(const QString &s)
@@ -277,18 +316,37 @@ void AgentClient::pollDownloadStatus()
     });
 }
 
-void AgentClient::askQuestion(const QString &text)
+void AgentClient::askQuestion(const QString &text, const QVariantList &history)
 {
     m_chatBusy = true;
     m_chatAnswer.clear();
     m_chatError.clear();
+    m_chatSources.clear();
+    m_chatGrounded = false;
+    m_chatCitationChecked = false;
+    m_chatCitationSupported = false;
+    m_chatBestSupported = 0;
+    m_chatToolCalls.clear();
     emit chatStateChanged();
 
     QNetworkRequest req{ QUrl(m_serverUrl + QStringLiteral("/chat")) };
     req.setTransferTimeout(kChatTimeoutMs);
     req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
 
-    const QJsonObject body{ { QStringLiteral("message"), text } };
+    QJsonObject body{ { QStringLiteral("message"), text } };
+    /* The picker in SettingsView was inert until now: the server has always
+       accepted a "model" field under Ollama and this never sent one, so every
+       question silently went to whichever model /models happened to list
+       first. Omitted rather than sent empty, which the server reads as "you
+       choose" -- and llamacpp ignores it either way, having one model. */
+    if (!m_selectedModel.isEmpty())
+        body.insert(QStringLiteral("model"), m_selectedModel);
+    if (!history.isEmpty()) {
+        QJsonArray historyArray;
+        for (const QVariant &turn : history)
+            historyArray.append(QJsonObject::fromVariantMap(turn.toMap()));
+        body.insert(QStringLiteral("history"), historyArray);
+    }
     QNetworkReply *reply = m_net->post(req, QJsonDocument(body).toJson(QJsonDocument::Compact));
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
         reply->deleteLater();
@@ -312,6 +370,45 @@ void AgentClient::askQuestion(const QString &text)
         }
 
         m_chatAnswer = obj.value(QStringLiteral("answer")).toString();
+
+        /* Sources are optional on the wire on purpose: a server still running
+           the A2a build answers without them, and that has to degrade to "no
+           citations shown" rather than "unreadable reply". */
+        m_chatSources.clear();
+        const QJsonArray sources = obj.value(QStringLiteral("sources")).toArray();
+        for (const QJsonValue &value : sources) {
+            const QJsonObject source = value.toObject();
+            m_chatSources.append(QVariantMap{
+                { QStringLiteral("n"), source.value(QStringLiteral("n")).toInt() },
+                { QStringLiteral("path"), source.value(QStringLiteral("path")).toString() },
+                { QStringLiteral("heading"), source.value(QStringLiteral("heading")).toString() },
+                { QStringLiteral("citation"), source.value(QStringLiteral("citation")).toString() },
+                { QStringLiteral("score"), source.value(QStringLiteral("score")).toDouble() },
+                { QStringLiteral("cited"), source.value(QStringLiteral("cited")).toBool() },
+            });
+        }
+        m_chatGrounded = obj.value(QStringLiteral("grounded")).toBool();
+
+        const QJsonObject check = obj.value(QStringLiteral("citation_check")).toObject();
+        m_chatCitationChecked = check.value(QStringLiteral("checked")).toBool();
+        m_chatCitationSupported = check.value(QStringLiteral("supported")).toBool();
+        m_chatBestSupported = check.value(QStringLiteral("best_supported")).toInt();
+
+        /* A2b, tool half. Optional on the wire for the same reason sources
+           were in A2a: an older server still answers without this field, and
+           that has to degrade to "no tool was called" rather than an
+           unreadable reply. */
+        m_chatToolCalls.clear();
+        const QJsonArray toolCalls = obj.value(QStringLiteral("tool_calls")).toArray();
+        for (const QJsonValue &value : toolCalls) {
+            const QJsonObject call = value.toObject();
+            m_chatToolCalls.append(QVariantMap{
+                { QStringLiteral("name"), call.value(QStringLiteral("name")).toString() },
+                { QStringLiteral("arguments"), call.value(QStringLiteral("arguments")).toVariant() },
+                { QStringLiteral("result"), call.value(QStringLiteral("result")).toVariant() },
+            });
+        }
+
         m_chatBusy = false;
         emit chatStateChanged();
     });

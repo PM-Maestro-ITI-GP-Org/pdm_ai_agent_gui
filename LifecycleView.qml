@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Shapes
 import PdM.Core
 
 /*
@@ -14,6 +15,12 @@ import PdM.Core
  * back to the real document rather than asserting anything beyond what that
  * document said on the date it was read. It is not safe to treat as current
  * without re-checking once the rework lands.
+ *
+ * Rendered as a pipeline diagram: a numbered spine running top to bottom with
+ * an arrow between each stage showing the direction data flows, not a plain
+ * list. The gate stage's node is drawn as a diamond rather than a circle --
+ * it is a checkpoint, not a processing step, and the shape says so before the
+ * "path uncertain" badge on its card does.
  */
 Item {
     ListModel {
@@ -87,7 +94,7 @@ Item {
                 id: noticeText
                 anchors.fill: parent
                 anchors.margins: Theme.spacingTight
-                text: qsTr("⚠  Read from the AI repo on 2026-08-20, which is being actively "
+                text: qsTr("Read from the AI repo on 2026-08-20, which is being actively "
                          + "reworked by someone else as of that date. The first six stages are "
                          + "the notebook chain and are unlikely to move; the gate stage's path "
                          + "already disagrees with what PdM-Maestro's ML/Ops tab reads — see "
@@ -110,17 +117,103 @@ Item {
 
                 Repeater {
                     model: stages
-                    StageCard {
+
+                    delegate: RowLayout {
+                        id: rowDelegate
+
                         /* See the comment beside the equivalent Repeater in
-                           SystemMapView.qml -- same shadowing bug, same fix. */
+                           SystemMapView.qml -- same shadowing bug, same fix:
+                           declared here on the delegate's own root, never
+                           read implicitly from outer scope. */
                         required property var model
+                        required property int index
 
                         Layout.fillWidth: true
-                        stageName: model.stageName
-                        role: model.role
-                        writes: model.writes
-                        status: model.status
-                        docPath: model.docPath
+                        spacing: 0
+
+                        Item {
+                            id: rail
+
+                            readonly property var entry: rowDelegate.model
+                            readonly property bool isGate: rail.entry.status === "provisional"
+                            readonly property bool isFirst: rowDelegate.index === 0
+                            readonly property bool isLast: rowDelegate.index === stages.count - 1
+
+                            Layout.preferredWidth: Theme.spacingLoose + Theme.spacing
+                            Layout.fillHeight: true
+
+                            Rectangle {
+                                visible: !rail.isFirst
+                                anchors.top: parent.top
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                width: 2
+                                height: parent.height / 2
+                                color: Theme.outline
+                            }
+                            Rectangle {
+                                visible: !rail.isLast
+                                anchors.bottom: parent.bottom
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                width: 2
+                                height: parent.height / 2
+                                color: Theme.outline
+                            }
+
+                            /* the flow arrow -- drawn last so it sits on top
+                               of the spine's lower segment, right where the
+                               next stage's line picks up. */
+                            Shape {
+                                visible: !rail.isLast
+                                anchors.bottom: parent.bottom
+                                anchors.bottomMargin: -3
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                width: 10
+                                height: 6
+
+                                ShapePath {
+                                    fillColor: Theme.textDisabled
+                                    strokeColor: "transparent"
+                                    startX: 0; startY: 0
+                                    PathLine { x: 10; y: 0 }
+                                    PathLine { x: 5; y: 6 }
+                                    PathLine { x: 0; y: 0 }
+                                }
+                            }
+
+                            /* the node: a numbered circle for a processing
+                               stage, a numbered diamond for the gate --
+                               a checkpoint, not a step, reads differently on
+                               purpose. */
+                            Rectangle {
+                                id: node
+                                anchors.centerIn: parent
+                                width: rail.isGate ? 16 : 22
+                                height: width
+                                radius: rail.isGate ? Theme.radiusSmall : width / 2
+                                rotation: rail.isGate ? 45 : 0
+                                color: rail.isGate ? Theme.warningSoft : Theme.primarySoft
+                                border.width: 2
+                                border.color: rail.isGate ? Theme.warning : Theme.primary
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    rotation: rail.isGate ? -45 : 0
+                                    text: rowDelegate.index + 1
+                                    font.pixelSize: Theme.fontTiny
+                                    font.weight: Font.DemiBold
+                                    color: rail.isGate ? Theme.warning : Theme.primary
+                                }
+                            }
+                        }
+
+                        StageCard {
+                            Layout.fillWidth: true
+                            stageName: rowDelegate.model.stageName
+                            role: rowDelegate.model.role
+                            writes: rowDelegate.model.writes
+                            status: rowDelegate.model.status
+                            docPath: rowDelegate.model.docPath
+                        }
                     }
                 }
             }

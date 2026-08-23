@@ -37,6 +37,12 @@ class AgentClient : public QObject
     Q_PROPERTY(QString selectedModel READ selectedModel WRITE setSelectedModel
                    NOTIFY selectedModelChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusChanged)
+    /* The command behind the "Start local AI" affordance -- normally written
+       for the user by server/setup.py (which knows where the venv landed),
+       editable in SettingsView. Empty means there is nothing to launch, and
+       the UI says so rather than showing a button that cannot work. */
+    Q_PROPERTY(QString serverStartCommand READ serverStartCommand
+                   WRITE setServerStartCommand NOTIFY serverStartCommandChanged)
 
     Q_PROPERTY(QVariantList modelCatalog READ modelCatalog NOTIFY modelCatalogChanged)
 
@@ -52,6 +58,32 @@ class AgentClient : public QObject
     Q_PROPERTY(QString chatAnswer READ chatAnswer NOTIFY chatStateChanged)
     Q_PROPERTY(QString chatError READ chatError NOTIFY chatStateChanged)
 
+    /* A2b: the sections the answer was retrieved from, each carrying whether
+       the model actually cited it. Shown rather than hidden -- SCOPE.md §7
+       makes citation a requirement, so an answer that cites nothing has to
+       look different from one that does, not merely score worse somewhere. */
+    Q_PROPERTY(QVariantList chatSources READ chatSources NOTIFY chatStateChanged)
+    Q_PROPERTY(bool chatGrounded READ chatGrounded NOTIFY chatStateChanged)
+
+    /* Whether the answer resembles the source it *claimed*, not merely
+       whether it printed a number. The server checks this because the model
+       was observed answering correctly out of one section and citing a
+       different one; `chatGrounded` alone would have called that grounded.
+       Three states, not two -- unchecked is not the same as failed. */
+    Q_PROPERTY(bool chatCitationChecked READ chatCitationChecked NOTIFY chatStateChanged)
+    Q_PROPERTY(bool chatCitationSupported READ chatCitationSupported NOTIFY chatStateChanged)
+    Q_PROPERTY(int chatBestSupported READ chatBestSupported NOTIFY chatStateChanged)
+
+    /* A2b, tool half: which tool (if any) the server called before answering,
+       and what it got back -- a list of {name, arguments, result}. Empty on
+       the common path; tools are additive per docs/SCOPE.md §6.3, never
+       required for an answer to exist. QML acts on a "navigate_to" entry by
+       publishing on MessageBus itself (see ChatView.qml) rather than this
+       client reaching into the bus -- every other publish in this codebase
+       already happens from QML, and this class stays what its own header
+       comment above calls it: a thin HTTP client, nothing more. */
+    Q_PROPERTY(QVariantList chatToolCalls READ chatToolCalls NOTIFY chatStateChanged)
+
 public:
     explicit AgentClient(QObject *parent = nullptr);
 
@@ -62,6 +94,7 @@ public:
     QStringList availableModels() const { return m_availableModels; }
     QString selectedModel() const { return m_selectedModel; }
     QString statusText() const { return m_statusText; }
+    QString serverStartCommand() const { return m_serverStartCommand; }
 
     QVariantList modelCatalog() const { return m_modelCatalog; }
 
@@ -76,18 +109,36 @@ public:
     bool chatBusy() const { return m_chatBusy; }
     QString chatAnswer() const { return m_chatAnswer; }
     QString chatError() const { return m_chatError; }
+    QVariantList chatSources() const { return m_chatSources; }
+    bool chatGrounded() const { return m_chatGrounded; }
+    bool chatCitationChecked() const { return m_chatCitationChecked; }
+    bool chatCitationSupported() const { return m_chatCitationSupported; }
+    int chatBestSupported() const { return m_chatBestSupported; }
+    QVariantList chatToolCalls() const { return m_chatToolCalls; }
 
     void setServerUrl(const QString &v);
     void setSelectedModel(const QString &v);
+    void setServerStartCommand(const QString &v);
 
     Q_INVOKABLE void checkConnection();
+    /* The bootstrap half of "easy setup": the server cannot download its own
+       runtime, install its own venv, or be reached at all until something
+       starts it -- this is that something, run detached so it outlives the
+       GUI. One-shot by design (docs/SCOPE.md §6.1: AI lives outside Qt);
+       everything after uvicorn is up stays server-side. */
+    Q_INVOKABLE void startServer();
     Q_INVOKABLE void refreshCatalog();
     Q_INVOKABLE void downloadModel(const QString &id);
-    Q_INVOKABLE void askQuestion(const QString &text);
+    /* `history` is the client's own transcript, oldest first, each entry
+       {role: "user"|"assistant", content: string} -- QML owns the transcript
+       (ChatView.qml), this just serializes whatever it's handed. Optional:
+       an empty list is a first question, same as omitting it used to be. */
+    Q_INVOKABLE void askQuestion(const QString &text, const QVariantList &history = {});
 
 signals:
     void serverUrlChanged();
     void statusChanged();
+    void serverStartCommandChanged();
     void availableModelsChanged();
     void selectedModelChanged();
     void modelCatalogChanged();
@@ -105,6 +156,7 @@ private:
 
     QString m_serverUrl;
     QString m_selectedModel;
+    QString m_serverStartCommand;
 
     bool m_reachable = false;
     bool m_backendConnected = false;
@@ -129,6 +181,12 @@ private:
     bool m_chatBusy = false;
     QString m_chatAnswer;
     QString m_chatError;
+    QVariantList m_chatSources;
+    bool m_chatGrounded = false;
+    bool m_chatCitationChecked = false;
+    bool m_chatCitationSupported = false;
+    int m_chatBestSupported = 0;
+    QVariantList m_chatToolCalls;
 };
 
 } // namespace Agent
