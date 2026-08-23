@@ -87,7 +87,7 @@ void AgentClient::setServerStartCommand(const QString &v)
 void AgentClient::startServer()
 {
     if (m_serverStartCommand.trimmed().isEmpty()) {
-        setStatusText(tr("no start command — run server/setup.py, or set it in Settings"));
+        setStatusText(tr("no start command — run setup.py from the pdm_ai_server repo, or set it in Settings"));
         emit statusChanged();
         return;
     }

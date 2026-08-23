@@ -15,19 +15,21 @@ step reports `agent: integrated as pdm_agent (PdM.Agent)`, not a placeholder.
 - **Lifecycle view** — the ML pipeline stages, with a visible banner marking
   the AI-repo-sourced parts provisional while that repo is being reworked.
 
-**A2a done:** a Python server outside Qt (`server/`), reached over HTTP —
-health, model listing and download, and a first grounded `/chat` that pasted
-the whole reachable corpus into the system prompt.
+**A2a done:** a Python server outside Qt, reached over HTTP — health,
+model listing and download, and a first grounded `/chat` that pasted the
+whole reachable corpus into the system prompt. The server now lives in its
+own repository: [pdm_ai_server](https://github.com/PM-Maestro-ITI-GP-Org/pdm_ai_server).
 
 **A2b done, both halves, and run against real hardware.** Retrieval: the
 server chunks the corpus at markdown headings, embeds the chunks, and
 retrieves only the top few sections per question — the whole-corpus prompt
-above didn't fit the hardware floor this project targets, see
-`server/README.md` for the measured numbers. Tool-calling: `search_docs`,
+above didn't fit the hardware floor this project targets, see the
+[pdm_ai_server README](https://github.com/PM-Maestro-ITI-GP-Org/pdm_ai_server#retrieval)
+for the measured numbers. Tool-calling: `search_docs`,
 `read_file`, `list_repo`, `navigate_to`, model-driven with a deterministic
 fallback (`docs/SCOPE.md` §6.3). `navigate_to` can also name one UI element
 to flash after the switch — a real guided-tour case, not just a tab jump —
-see "Using the AI Agent" below and `server/tools.py`'s `HIGHLIGHT_TARGETS`.
+see "Using the AI Agent" below and `tools.py`'s `HIGHLIGHT_TARGETS` in pdm_ai_server.
 
 ## What it is meant to be
 
@@ -52,8 +54,10 @@ other.
 
 Open the **AI Agent** tab (the star icon, rightmost in the bar). The status
 pill top-right shows whether it's actually reachable — a red dot means the
-Python server or the model backend isn't up; see `server/README.md` if it
-stays that way.
+Python server or the model backend isn't up; see the
+[pdm_ai_server README](https://github.com/PM-Maestro-ITI-GP-Org/pdm_ai_server)
+if it stays that way. When nothing is running yet, **Start local AI** next to
+the pill launches it (setup writes the command; see pdm_ai_server's setup.py).
 
 **Asking a question.** Type into the box and press Enter or **Ask**. Before
 your first question, the box shows example questions grouped by category
@@ -92,7 +96,7 @@ the sentence explaining it.
 you land on the tab — Motor Control's fetch panel is the one wired up so
 far, so ask something like *"how do I fetch recordings off the rig"* to see
 it: a blue ring pulses around the panel a few times. This is new and grows
-one element at a time (`server/tools.py`'s `HIGHLIGHT_TARGETS`); most tabs
+one element at a time (pdm_ai_server's `tools.py` `HIGHLIGHT_TARGETS`); most tabs
 don't have anything wired to flash yet.
 
 **A note on reliability.** The model picks which tool to call, and it isn't
@@ -112,9 +116,9 @@ of it, never required for the answer to be correct.
 | "Act" commands (run a scenario, fetch, OTA) | **Still read-only.** `docs/SCOPE.md` §8 explains why, with the bench failure that motivates it |
 | Read and navigate tools (list recordings, switch tabs) | **In scope for A2b.** Can't affect the system — `docs/SCOPE.md` §6.2 |
 | The AI itself | **Outside Qt**, a local Python server reached over HTTP — `docs/SCOPE.md` §6.1 |
-| Model hosting | **Local**, via `llama.cpp` or Ollama — this laptop or a second one as a server, backend/model/host all configuration. `llama.cpp` is the default; see `server/README.md` for why it needs a second `llama-server` process once embeddings are involved. A GTX 1650 (`qwen2.5:1.5b`-class, `n_ctx` 2048–4096) is the design floor, not this laptop. `docs/SCOPE.md` §6.4 |
+| Model hosting | **Local**, via `llama.cpp` or Ollama — this laptop or a second one as a server, backend/model/host all configuration. `llama.cpp` is the default; see the pdm_ai_server README for why it needs a second `llama-server` process once embeddings are involved. A GTX 1650 (`qwen2.5:1.5b`-class, `n_ctx` 2048–4096) is the design floor, not this laptop. `docs/SCOPE.md` §6.4 |
 | Tool-calling | **Model-driven, deterministic retrieval underneath as the real fallback** for weak models or failed calls — built, `docs/SCOPE.md` §6.3 |
-| Retrieval | **Semantic search (embeddings), no vector database needed at this corpus size** — implemented; see `server/README.md`'s "Retrieval" section for the chunk counts and prompt-size measurements. `docs/SCOPE.md` §6.5 |
+| Retrieval | **Semantic search (embeddings), no vector database needed at this corpus size** — implemented; see the pdm_ai_server README's "Retrieval" section for the chunk counts and prompt-size measurements. `docs/SCOPE.md` §6.5 |
 | Text to speech | **No.** That belonged to Layer 5, which this is not |
 
 ## Build

@@ -38,9 +38,10 @@ class AgentClient : public QObject
                    NOTIFY selectedModelChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusChanged)
     /* The command behind the "Start local AI" affordance -- normally written
-       for the user by server/setup.py (which knows where the venv landed),
-       editable in SettingsView. Empty means there is nothing to launch, and
-       the UI says so rather than showing a button that cannot work. */
+       for the user by pdm_ai_server's setup.py (which knows where the venv
+       landed), editable in SettingsView. Empty means there is nothing to
+       launch, and the UI says so rather than showing a button that cannot
+       work. */
     Q_PROPERTY(QString serverStartCommand READ serverStartCommand
                    WRITE setServerStartCommand NOTIFY serverStartCommandChanged)
 

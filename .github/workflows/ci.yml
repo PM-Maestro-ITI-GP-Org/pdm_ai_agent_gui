@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # core/ is a private repo in the same org; the job's own token can
+      # reach it over HTTPS as long as the org lets Actions read its repos.
+      - name: Fetch the core submodule
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
+          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git submodule update --init --recursive
+
+      # Floor is Qt 6.5 (see CMakeLists.txt); 6.10 is what the dev machines
+      # run. Quick/Qml/QuickControls2 live in qtdeclarative, and qtshadertools
+      # must be present for the .qsb tooling the QML build invokes.
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.10.*"
+          archives: qtbase qtdeclarative qtshadertools qtsvg icu qttranslations
+          cache: true
+
+      - name: Configure (standalone app)
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Package
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          mkdir -p stage/bin
+          cp build/agent_gui stage/bin/
+          cp README.md stage/
+          tar -czf "pdm_ai_agent_gui-${GITHUB_REF_NAME}-linux-x64.tar.gz" -C stage .
+
+      - name: Create release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: pdm_ai_agent_gui-*-linux-x64.tar.gz
+          body: |
+            Standalone Linux build of the AI Agent GUI (`agent_gui`).
+
+            Built on ubuntu-24.04 with Qt 6.10 — needs a matching glibc and
+            `libgl`. Run `bin/agent_gui`; the tab renders on its own, and the
+            model backend comes from [pdm_ai_server](https://github.com/PM-Maestro-ITI-GP-Org/pdm_ai_server)
+            (`setup.py` there wires up the Start button). Inside the full
+            Maestro shell this same repo builds as a library instead.
+          generate_release_notes: true

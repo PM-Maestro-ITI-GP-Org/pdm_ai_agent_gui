@@ -188,9 +188,9 @@ Item {
                     onEditingFinished: root.assistant.serverUrl = text
                 }
 
-                /* Normally written by server/setup.py; editable here for the
-                   "the server moved" case that shouldn't require rerunning a
-                   wizard. */
+                /* Normally written by the pdm_ai_server setup wizard; editable
+                   here for the "the server moved" case that shouldn't require
+                   rerunning a wizard. */
                 Text {
                     text: qsTr("start command")
                     font.pixelSize: Theme.fontTiny
@@ -204,7 +204,7 @@ Item {
                         id: startCommandField
                         Layout.fillWidth: true
                         text: root.assistant.serverStartCommand
-                        placeholderText: qsTr("run server/setup.py to configure")
+                        placeholderText: qsTr("run pdm_ai_server's setup.py to configure")
                         font.family: Theme.monoFamily
                         font.pixelSize: Theme.fontSmall
                         onEditingFinished: root.assistant.serverStartCommand = text
