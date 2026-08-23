@@ -38,10 +38,8 @@ jobs:
       - name: Package
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          mkdir -p stage/bin
-          cp build/agent_gui stage/bin/
-          cp README.md stage/
-          tar -czf "pdm_ai_agent_gui-${GITHUB_REF_NAME}-linux-x64.tar.gz" -C stage .
+          ./scripts/package-linux.sh build/agent_gui \
+            "pdm_ai_agent_gui-${GITHUB_REF_NAME}-linux-x64.tar.gz"
 
       - name: Create release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -49,11 +47,13 @@ jobs:
         with:
           files: pdm_ai_agent_gui-*-linux-x64.tar.gz
           body: |
-            Standalone Linux build of the AI Agent GUI (`agent_gui`).
+            Self-contained Linux build of the AI Agent GUI.
 
-            Built on ubuntu-24.04 with Qt 6.10 — needs a matching glibc and
-            `libgl`. Run `bin/agent_gui`; the tab renders on its own, and the
-            model backend comes from [pdm_ai_server](https://github.com/PM-Maestro-ITI-GP-Org/pdm_ai_server)
-            (`setup.py` there wires up the Start button). Inside the full
+            Extract, then run **./run.sh** — never bin/agent_gui directly.
+            Bundles its own Qt 6.10 and every non-system library, so any
+            distro with glibc >= 2.39 works regardless of what Qt (if any)
+            is installed. Built on ubuntu-24.04. The model backend comes
+            from [pdm_ai_server](https://github.com/PM-Maestro-ITI-GP-Org/pdm_ai_server)
+            (`setup.py` there wires up the Start button); inside the full
             Maestro shell this same repo builds as a library instead.
           generate_release_notes: true
