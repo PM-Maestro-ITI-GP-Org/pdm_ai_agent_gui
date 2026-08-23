@@ -29,10 +29,14 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS Quick Qml Widgets QuickControls2 Networ
 
 qt_standard_project_setup(REQUIRES 6.5)
 
-# The palette, message bus and app registry. Carried as a submodule so this
-# repo still builds when cloned on its own; the guard stops it being added a
-# second time inside a Maestro build, where Maestro has already added its own
-# pinned copy and both would claim the PdM.Core module URI.
+# The palette, message bus and app registry. Carried as a vendored copy of
+# pdm_app_core (pinned at its 8dc5bbe) so this repo still builds when cloned
+# on its own -- and, since 2026-08-23, so CI can build it at all: a private
+# submodule needs cross-repo credentials Actions don't get. The guard stops
+# the copy being added a second time inside a Maestro build, where Maestro
+# has already added its own pinned copy and both would claim the PdM.Core
+# module URI -- meaning updates to the real repo are picked up here by
+# re-copying, not by a pointer bump.
 if(NOT TARGET pdm_core)
     add_subdirectory(core)
 endif()

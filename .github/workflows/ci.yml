@@ -15,13 +15,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # core/ is a private repo in the same org; the job's own token can
-      # reach it over HTTPS as long as the org lets Actions read its repos.
-      - name: Fetch the core submodule
-        run: |
-          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
-          git config --global --add url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
-          git submodule update --init --recursive
+      # core/ is a vendored copy of pdm_app_core (see CMakeLists.txt), not a
+      # submodule -- so a plain checkout has everything the build needs and
+      # no cross-repo credentials are involved.
 
       # Floor is Qt 6.5 (see CMakeLists.txt); 6.10 is what the dev machines
       # run. Quick/Qml/QuickControls2 live in qtdeclarative, and qtshadertools
