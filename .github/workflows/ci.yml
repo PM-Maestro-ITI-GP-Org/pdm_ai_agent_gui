@@ -20,7 +20,7 @@ jobs:
       - name: Fetch the core submodule
         run: |
           git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
-          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          git config --global --add url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
           git submodule update --init --recursive
 
       # Floor is Qt 6.5 (see CMakeLists.txt); 6.10 is what the dev machines
