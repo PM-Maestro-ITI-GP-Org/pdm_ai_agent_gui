@@ -102,6 +102,18 @@ Item {
         root.pendingQuestion = text;
         input.text = "";
         root.assistant.askQuestion(text, root.historyForServer());
+        Qt.callLater(() => { transcriptFlickable.contentY = 0; });
+    }
+
+    /* Newest first: the transcript itself stays chronological (indices feed
+       `historyForServer()`, `liveIndex`, `navigateSuggestionIndex`), but the
+       Repeater below renders this reversed view instead so the latest answer
+       lands at the top, right under the input, with no scrolling needed. */
+    readonly property var reversedTranscript: {
+        const out = [];
+        for (let i = root.transcript.length - 1; i >= 0; i--)
+            out.push({ i: i, t: root.transcript[i] });
+        return out;
     }
 
     function acceptNavigate(index) {
@@ -150,10 +162,7 @@ Item {
                 typewriter.start();
             }
 
-            Qt.callLater(() => {
-                transcriptFlickable.contentY =
-                    Math.max(0, transcriptFlickable.contentHeight - transcriptFlickable.height);
-            });
+            Qt.callLater(() => { transcriptFlickable.contentY = 0; });
         }
     }
 
@@ -336,21 +345,85 @@ Item {
                 }
             }
 
-            /* -------- the transcript -------- */
+            /* -------- the in-flight question --------
+               Not yet a transcript entry -- it becomes one the moment
+               `onChatStateChanged` above sees the answer land. Placed above
+               the transcript, not below: newest-first means "what's
+               happening right now" belongs at the top too, right where the
+               completed turn it becomes will appear next. */
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: Theme.spacing
+                visible: root.assistant.chatBusy
+                spacing: Theme.spacingTight
+
+                Text {
+                    Layout.fillWidth: true
+                    Layout.alignment: Qt.AlignRight
+                    text: root.pendingQuestion
+                    wrapMode: Text.WordWrap
+                    horizontalAlignment: Text.AlignRight
+                    font.pixelSize: Theme.fontSmall
+                    font.weight: Font.Medium
+                    color: Theme.textSecondary
+                }
+
+                RowLayout {
+                    Layout.alignment: Qt.AlignHCenter
+                    spacing: Theme.spacingTight
+
+                    Repeater {
+                        model: 3
+                        delegate: Rectangle {
+                            required property int index
+                            implicitWidth: 10
+                            implicitHeight: 10
+                            radius: 5
+                            color: Theme.primary
+
+                            SequentialAnimation on opacity {
+                                running: root.assistant.chatBusy
+                                loops: Animation.Infinite
+                                PauseAnimation { duration: index * 150 }
+                                NumberAnimation { from: 0.25; to: 1.0; duration: 350; easing.type: Easing.InOutQuad }
+                                NumberAnimation { from: 1.0; to: 0.25; duration: 350; easing.type: Easing.InOutQuad }
+                                PauseAnimation { duration: (2 - index) * 150 }
+                            }
+                            SequentialAnimation on scale {
+                                running: root.assistant.chatBusy
+                                loops: Animation.Infinite
+                                PauseAnimation { duration: index * 150 }
+                                NumberAnimation { from: 0.7; to: 1.15; duration: 350; easing.type: Easing.InOutQuad }
+                                NumberAnimation { from: 1.15; to: 0.7; duration: 350; easing.type: Easing.InOutQuad }
+                                PauseAnimation { duration: (2 - index) * 150 }
+                            }
+                        }
+                    }
+                }
+                Text {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: qsTr("thinking…")
+                    font.pixelSize: Theme.fontTiny
+                    color: Theme.textDisabled
+                }
+            }
+
+            /* -------- the transcript, newest first -------- */
             Repeater {
-                model: root.transcript
+                model: root.reversedTranscript
 
                 delegate: ColumnLayout {
                     id: turnBlock
                     required property var modelData
-                    required property int index
+                    readonly property var turn: modelData.t
+                    readonly property int index: modelData.i
 
-                    readonly property bool isLive: index === root.liveIndex
+                    readonly property bool isLive: turnBlock.index === root.liveIndex
                     readonly property int revealedChars: turnBlock.isLive
-                        ? Math.min(typewriter.shownChars, turnBlock.modelData.answer.length)
-                        : turnBlock.modelData.answer.length
+                        ? Math.min(typewriter.shownChars, turnBlock.turn.answer.length)
+                        : turnBlock.turn.answer.length
                     readonly property bool fullyRevealed:
-                        turnBlock.revealedChars >= turnBlock.modelData.answer.length
+                        turnBlock.revealedChars >= turnBlock.turn.answer.length
 
                     Layout.fillWidth: true
                     Layout.topMargin: Theme.spacing
@@ -360,7 +433,7 @@ Item {
                     Text {
                         Layout.fillWidth: true
                         Layout.alignment: Qt.AlignRight
-                        text: turnBlock.modelData.question
+                        text: turnBlock.turn.question
                         wrapMode: Text.WordWrap
                         horizontalAlignment: Text.AlignRight
                         font.pixelSize: Theme.fontSmall
@@ -385,8 +458,8 @@ Item {
 
                             Text {
                                 Layout.fillWidth: true
-                                visible: turnBlock.modelData.answer.length > 0
-                                text: turnBlock.modelData.answer.substring(0, turnBlock.revealedChars)
+                                visible: turnBlock.turn.answer.length > 0
+                                text: turnBlock.turn.answer.substring(0, turnBlock.revealedChars)
                                 /* The model writes real Markdown -- **bold**,
                                    lists, code spans. Qt's own Markdown support
                                    (textFormat, not a dependency) renders it;
@@ -409,7 +482,7 @@ Item {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: Theme.spacingTight
-                                visible: turnBlock.modelData.sources.length > 0 && turnBlock.fullyRevealed
+                                visible: turnBlock.turn.sources.length > 0 && turnBlock.fullyRevealed
 
                                 Rectangle {
                                     Layout.fillWidth: true
@@ -425,9 +498,9 @@ Item {
                                    into "grounded: yes/no" is what let a wrong
                                    citation read as a right one. */
                                 Text {
-                                    readonly property bool cited: turnBlock.modelData.grounded
-                                    readonly property bool checked: turnBlock.modelData.citationChecked
-                                    readonly property bool supported: turnBlock.modelData.citationSupported
+                                    readonly property bool cited: turnBlock.turn.grounded
+                                    readonly property bool checked: turnBlock.turn.citationChecked
+                                    readonly property bool supported: turnBlock.turn.citationSupported
 
                                     text: !cited ? qsTr("Sources — the answer cited none of them")
                                          : !checked ? qsTr("Sources")
@@ -446,21 +519,21 @@ Item {
                                     spacing: Theme.spacingTight
 
                                     Repeater {
-                                        model: turnBlock.modelData.sources
+                                        model: turnBlock.turn.sources
                                         delegate: Rectangle {
                                             /* `required property var modelData`, not a bare
                                                `modelData` reference: docs/STATUS.md bug 1 was a
                                                delegate quietly reading an outer property of the
                                                same name, and it repeated once already in this
                                                repo (SCOPE.md §10, A1). Doubly relevant here, one
-                                               level deeper, with the outer delegate also called
-                                               `modelData` via `turnBlock.modelData`. */
+                                               level deeper, with the outer delegate's own
+                                               `modelData` shadowed the same way. */
                                             required property var modelData
 
                                             readonly property bool mismatched:
-                                                turnBlock.modelData.citationChecked
-                                                && !turnBlock.modelData.citationSupported
-                                                && modelData.n === turnBlock.modelData.bestSupported
+                                                turnBlock.turn.citationChecked
+                                                && !turnBlock.turn.citationSupported
+                                                && modelData.n === turnBlock.turn.bestSupported
 
                                             implicitWidth: chip.implicitWidth + Theme.spacing
                                             implicitHeight: chip.implicitHeight + Theme.spacingTight
@@ -520,9 +593,9 @@ Item {
 
                                 Text {
                                     Layout.fillWidth: true
-                                    text: turnBlock.modelData.navigate
+                                    text: turnBlock.turn.navigate
                                           ? qsTr("Want me to take you to the %1 tab?")
-                                                .arg(turnBlock.modelData.navigate.tab)
+                                                .arg(turnBlock.turn.navigate.tab)
                                           : ""
                                     wrapMode: Text.WordWrap
                                     font.pixelSize: Theme.fontSmall
@@ -542,75 +615,14 @@ Item {
                             /* -------- error -------- */
                             Text {
                                 Layout.fillWidth: true
-                                visible: turnBlock.modelData.error.length > 0
-                                text: turnBlock.modelData.error
+                                visible: turnBlock.turn.error.length > 0
+                                text: turnBlock.turn.error
                                 wrapMode: Text.WordWrap
                                 font.pixelSize: Theme.fontSmall
                                 color: Theme.danger
                             }
                         }
                     }
-                }
-            }
-
-            /* -------- the in-flight question --------
-               Not yet a transcript entry -- it becomes one the moment
-               `onChatStateChanged` above sees the answer land. Until then
-               this is the only visible trace that a question was asked. */
-            ColumnLayout {
-                Layout.fillWidth: true
-                Layout.topMargin: Theme.spacing
-                visible: root.assistant.chatBusy
-                spacing: Theme.spacingTight
-
-                Text {
-                    Layout.fillWidth: true
-                    Layout.alignment: Qt.AlignRight
-                    text: root.pendingQuestion
-                    wrapMode: Text.WordWrap
-                    horizontalAlignment: Text.AlignRight
-                    font.pixelSize: Theme.fontSmall
-                    font.weight: Font.Medium
-                    color: Theme.textSecondary
-                }
-
-                RowLayout {
-                    Layout.alignment: Qt.AlignHCenter
-                    spacing: Theme.spacingTight
-
-                    Repeater {
-                        model: 3
-                        delegate: Rectangle {
-                            required property int index
-                            implicitWidth: 10
-                            implicitHeight: 10
-                            radius: 5
-                            color: Theme.primary
-
-                            SequentialAnimation on opacity {
-                                running: root.assistant.chatBusy
-                                loops: Animation.Infinite
-                                PauseAnimation { duration: index * 150 }
-                                NumberAnimation { from: 0.25; to: 1.0; duration: 350; easing.type: Easing.InOutQuad }
-                                NumberAnimation { from: 1.0; to: 0.25; duration: 350; easing.type: Easing.InOutQuad }
-                                PauseAnimation { duration: (2 - index) * 150 }
-                            }
-                            SequentialAnimation on scale {
-                                running: root.assistant.chatBusy
-                                loops: Animation.Infinite
-                                PauseAnimation { duration: index * 150 }
-                                NumberAnimation { from: 0.7; to: 1.15; duration: 350; easing.type: Easing.InOutQuad }
-                                NumberAnimation { from: 1.15; to: 0.7; duration: 350; easing.type: Easing.InOutQuad }
-                                PauseAnimation { duration: (2 - index) * 150 }
-                            }
-                        }
-                    }
-                }
-                Text {
-                    Layout.alignment: Qt.AlignHCenter
-                    text: qsTr("thinking…")
-                    font.pixelSize: Theme.fontTiny
-                    color: Theme.textDisabled
                 }
             }
 
