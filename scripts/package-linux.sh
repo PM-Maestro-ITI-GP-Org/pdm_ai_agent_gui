@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Package the standalone agent_gui build into a self-contained tarball:
+# Package a standalone Qt executable build into a self-contained tarball:
 # the binary, every non-system shared library it (and its Qt plugins)
 # actually pull in, the Qt plugins themselves, and a launcher that points
 # the loader at them before anything from the host system can interfere --
@@ -14,13 +14,14 @@
 # including libstdc++, OpenSSL and whatever compression libs Qt drags in,
 # travels with us.
 #
-# Usage: package-linux.sh <path-to-agent_gui> <output.tar.gz>
+# Usage: package-linux.sh <path-to-executable> <output.tar.gz>
 # Requires QT_ROOT_DIR to point at the Qt install the binary was built with.
 
 set -euo pipefail
 
-BIN="$(readlink -f "${1:?usage: package-linux.sh <agent_gui> <out.tar.gz>}")"
-OUT="${2:?usage: package-linux.sh <agent_gui> <out.tar.gz>}"
+BIN="$(readlink -f "${1:?usage: package-linux.sh <executable> <out.tar.gz>}")"
+OUT="${2:?usage: package-linux.sh <executable> <out.tar.gz>}"
+APP="$(basename "$BIN")"
 QT_ROOT_DIR="${QT_ROOT_DIR:?QT_ROOT_DIR must point at the Qt install}"
 
 NAME="$(basename "$OUT" .tar.gz)"
@@ -28,7 +29,7 @@ STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
 mkdir -p "$STAGE/$NAME/bin" "$STAGE/$NAME/lib" "$STAGE/$NAME/plugins"
-cp "$BIN" "$STAGE/$NAME/bin/"
+cp "$BIN" "$STAGE/$NAME/bin/$APP"
 
 # Qt plugins any real desktop session touches. xcbglintegrations is not
 # optional: Quick renders through OpenGL, and under xcb the load goes
@@ -91,7 +92,7 @@ cat > "$STAGE/$NAME/run.sh" <<EOF
 HERE="\$(cd "\$(dirname "\$(readlink -f "\$0")")" && pwd)"
 LD_LIBRARY_PATH="\$HERE/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
 export LD_LIBRARY_PATH
-exec "\$HERE/bin/agent_gui" "\$@"
+exec "\$HERE/bin/$APP" "\$@"
 EOF
 chmod +x "$STAGE/$NAME/run.sh"
 
