@@ -271,6 +271,23 @@ void AgentClient::downloadModel(const QString &id)
     });
 }
 
+void AgentClient::activateModel(const QString &id)
+{
+    QNetworkRequest req{ QUrl(m_serverUrl + QStringLiteral("/activate")) };
+    req.setTransferTimeout(kRequestTimeoutMs);
+    req.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
+
+    const QJsonObject body{ { QStringLiteral("id"), id } };
+    QNetworkReply *reply = m_net->post(req, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        reply->deleteLater();
+        // Whatever happened -- started, already running, or the server
+        // rejected it -- checkConnection's own poll picks up the real
+        // backendConnected/statusText, same as "Check now" already does.
+        checkConnection();
+    });
+}
+
 void AgentClient::resetDownloadState()
 {
     m_downloadActive = false;

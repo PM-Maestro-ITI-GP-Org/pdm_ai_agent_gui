@@ -327,11 +327,22 @@ Item {
                         }
 
                         Text {
-                            visible: catalogRow.modelData.installed
+                            visible: catalogRow.modelData.installed && root.assistant.backendConnected
                             text: qsTr("Installed")
                             font.pixelSize: Theme.fontTiny
                             font.weight: Font.DemiBold
                             color: Theme.success
+                        }
+                        Button {
+                            // Installed but not (yet, or not currently) served --
+                            // a download from before this existed, or a model
+                            // that just never got started. Same server call
+                            // POST /activate would happen re-hitting Download,
+                            // this is just the reachable way to ask for it once
+                            // the Download button itself is gone (installed).
+                            visible: catalogRow.modelData.installed && !root.assistant.backendConnected
+                            text: qsTr("Start")
+                            onClicked: root.assistant.activateModel(catalogRow.modelData.id)
                         }
                         Button {
                             visible: !catalogRow.modelData.installed

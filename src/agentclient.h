@@ -130,6 +130,13 @@ public:
     Q_INVOKABLE void startServer();
     Q_INVOKABLE void refreshCatalog();
     Q_INVOKABLE void downloadModel(const QString &id);
+    /* For a model that's already installed but never got served -- a
+       download from before the server started auto-activating on
+       completion, or one that just never happened to run. Fires POST
+       /activate and re-checks connection state; no new busy/error
+       tracking of its own, checkConnection()'s existing statusChanged
+       already covers "did this work." */
+    Q_INVOKABLE void activateModel(const QString &id);
     /* `history` is the client's own transcript, oldest first, each entry
        {role: "user"|"assistant", content: string} -- QML owns the transcript
        (ChatView.qml), this just serializes whatever it's handed. Optional:
